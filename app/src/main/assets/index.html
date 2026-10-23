@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<title>Basement Launcher</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed WebGL dollhouse of the scanned basement, with a quiet HUD in the corners like a TV ambient screen. Single dark look on purpose. */
+:root {
+  --ground: #0b0f17;
+  --ink: #e6e9f0;
+  --dim: #8a93a6;
+  --line: #2a3346;
+  --amber: #f2a65a;
+  --cyan: #7fd1d8;
+  --display: "Syne", "Avenir Next", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--ground); color: var(--ink); font-family: var(--mono); overflow: hidden; }
+#stage { position: fixed; inset: 0; }
+canvas { display: block; outline: none; }
+.hud {
+  position: fixed; pointer-events: none; display: grid; gap: 6px;
+  top: calc(20px + env(safe-area-inset-top, 0px));
+  left: max(20px, env(safe-area-inset-left, 0px));
+}
+.hud h1 { margin: 0; font-family: var(--display); font-weight: 800; font-size: clamp(28px, 5vw, 52px); letter-spacing: -0.02em; line-height: 1; text-wrap: balance; }
+.hud .meta { font-size: 12px; color: var(--dim); letter-spacing: 0.06em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+.legend {
+  position: fixed; display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: min(560px, calc(100vw - 40px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  left: max(20px, env(safe-area-inset-left, 0px));
+  font-size: 11px; color: var(--dim); letter-spacing: 0.05em; text-transform: uppercase; pointer-events: none;
+}
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.controls {
+  position: fixed; display: flex; gap: 8px;
+  top: calc(20px + env(safe-area-inset-top, 0px));
+  right: max(20px, env(safe-area-inset-right, 0px));
+}
+.controls button {
+  font: 500 12px var(--mono); letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--ink); background: rgba(20, 26, 38, 0.8); border: 1px solid var(--line);
+  padding: 8px 12px; border-radius: 6px; cursor: pointer;
+}
+.controls button[aria-pressed="true"] { border-color: var(--amber); color: var(--amber); }
+.controls button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+#tip {
+  position: fixed; pointer-events: none; padding: 6px 9px; border-radius: 5px;
+  background: rgba(11, 15, 23, 0.92); border: 1px solid var(--line); font-size: 12px; white-space: nowrap;
+  transform: translate(12px, 12px);
+}
+#tip b { color: var(--amber); font-weight: 500; }
+#tip small { color: var(--dim); display: block; }
+.status { position: fixed; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: 13px; pointer-events: none; }
+@media (max-width: 520px) { .controls { top: auto; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); } }
+
+/* ---- launcher layer ---- */
+[hidden] { display: none !important; }
+.hud .meta { display: none; }
+.controls, #tip, .legend { display: none !important; }
+.hud h1 { font-size: 64px; font-variant-numeric: tabular-nums; }
+.hud .date { font-family: var(--display); font-weight: 600; font-size: 20px; color: var(--ink); }
+.shade { position: fixed; inset: auto 0 0 0; height: 46%; pointer-events: none;
+  background: linear-gradient(to top, rgba(11,15,23,0.92), rgba(11,15,23,0)); }
+.dock-wrap { position: fixed; left: 0; right: 0; bottom: 36px; overflow: hidden; padding: 18px 0; }
+.dock-label { position: fixed; left: 48px; bottom: 182px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+.dock { display: flex; gap: 18px; padding: 0 48px; transition: transform 180ms ease-out; will-change: transform; }
+.tile { flex: 0 0 auto; width: 192px; height: 108px; border-radius: 10px; overflow: hidden; position: relative;
+  background: #1a2130; border: 2px solid transparent; transition: transform 120ms ease-out; }
+.tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tile.icon { display: grid; place-items: center; align-content: center; gap: 6px; }
+.tile.icon img { width: 48px; height: 48px; object-fit: contain; }
+.tile.icon span, .tile.text span { font-size: 12px; color: var(--ink); text-align: center; padding: 0 8px; line-height: 1.2; }
+.tile.text { display: grid; place-items: center; }
+.tile.focus { transform: scale(1.12); border-color: var(--amber); z-index: 2; }
+.focus-name { position: fixed; left: 48px; bottom: 12px; font-family: var(--display); font-weight: 600; font-size: 18px; color: var(--ink); }
+</style>
+
+<div id="stage"></div>
+<div class="status" id="status">Loading scan…</div>
+<div class="hud">
+  <h1>Basement</h1>
+  <div class="date" id="date"></div>
+  <div class="meta" id="dims">Polycam / RoomPlan scan</div>
+</div>
+<div class="controls">
+  <button id="spin" aria-pressed="true">Orbit</button>
+  <button id="walls" aria-pressed="true">Walls</button>
+  <button id="view">Top</button>
+</div>
+<div class="legend" id="legend"></div>
+<div id="tip" hidden></div>
+
+
+<div class="shade"></div>
+<div class="dock-label">Apps</div>
+<div class="dock-wrap"><div class="dock" id="dock"></div></div>
+<div class="focus-name" id="focusName"></div>
+<script>
+// App dock: plain script so it works even if the 3D scene fails to load
+(function () {
+  const dock = document.getElementById("dock"), nameEl = document.getElementById("focusName");
+  const clock = document.querySelector(".hud h1"), dateEl = document.getElementById("date");
+  const SAMPLE = [ // shown when opened in a desktop browser, where there is no Android bridge
+    { pkg: "com.google.android.youtube.tv", label: "YouTube", tv: true },
+    { pkg: "com.netflix.ninja", label: "Netflix", tv: true },
+    { pkg: "org.jellyfin.androidtv", label: "Jellyfin", tv: true },
+    { pkg: "com.plexapp.android", label: "Plex", tv: true }
+  ];
+  let apps = [], i = 0, lastRaw = "";
+
+  function load() {
+    let list = SAMPLE;
+    try {
+      if (window.Android) {
+        const raw = window.Android.apps();
+        if (raw === lastRaw) return;
+        lastRaw = raw; list = JSON.parse(raw);
+      }
+    } catch (e) { console.error("apps()", e); }
+    list.sort((a, b) => (b.tv - a.tv) || a.label.localeCompare(b.label));
+    apps = [...list, { pkg: "__settings", label: "Settings", tv: true }];
+    render();
+  }
+
+  function tile(a) {
+    const el = document.createElement("div");
+    if (a.art && a.banner) { el.className = "tile"; el.innerHTML = `<img alt="">`; el.firstChild.src = a.art; }
+    else if (a.art) { el.className = "tile icon"; el.innerHTML = `<img alt=""><span></span>`; el.firstChild.src = a.art; el.lastChild.textContent = a.label; }
+    else { el.className = "tile text"; el.innerHTML = `<span></span>`; el.firstChild.textContent = a.label; }
+    return el;
+  }
+
+  function render() {
+    dock.replaceChildren(...apps.map(tile));
+    i = Math.min(i, apps.length - 1);
+    focus(i);
+  }
+
+  function focus(n) {
+    i = Math.max(0, Math.min(apps.length - 1, n));
+    [...dock.children].forEach((el, k) => el.classList.toggle("focus", k === i));
+    nameEl.textContent = apps[i] ? apps[i].label : "";
+    // keep the focused tile on screen: slide the row once focus passes the middle
+    const step = 192 + 18, visible = Math.floor((innerWidth - 96) / step);
+    const shift = Math.max(0, Math.min(i - Math.floor(visible / 2), apps.length - visible));
+    dock.style.transform = `translateX(${-shift * step}px)`;
+  }
+
+  function open() {
+    const a = apps[i]; if (!a) return;
+    if (!window.Android) { console.log("would launch", a.pkg); return; }
+    if (a.pkg === "__settings") window.Android.openSettings(); else window.Android.launch(a.pkg);
+  }
+
+  addEventListener("keydown", e => {
+    if (e.key === "ArrowRight") focus(i + 1);
+    else if (e.key === "ArrowLeft") focus(i - 1);
+    else if (e.key === "Enter" || e.key === " ") open();
+    else return;
+    e.preventDefault();
+  });
+  window.onHome = () => focus(0);
+  window.onBack = () => focus(0);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); }); // pick up new installs
+
+  function tick() {
+    const d = new Date();
+    clock.textContent = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    dateEl.textContent = d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  }
+  tick(); setInterval(tick, 10000);
+  load();
+})();
+</script>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+
+
+const ROOM_COLORS = {
+  Living_Room: "#3b4a7a", Office: "#3a6b6e", Bathroom: "#6a4c7a",
+  Other_1: "#4a5266", Other_2: "#4d5a52", Other_3: "#5a4e44", Other_4: "#5a4e44"
+};
+const ROOM_LABELS = {
+  Living_Room: "Living room", Office: "Office", Bathroom: "Bathroom",
+  Other_1: "Laundry & stairs", Other_2: "Storage", Other_3: "Under stairs", Other_4: "Under stairs"
+};
+// What each RoomPlan guess actually is, matched against the photos. null = hide (replaced below)
+const OVERRIDES = {
+  chair_other_four_back_no_1: ["Brick hearth", "#8a3b2c"],
+  sofa_rect_1: ["Grey leather sectional", "#5d616c"], sofa_rect_l_ex_0: ["Sectional chaise", "#5d616c"],
+  sofa_rect_0: ["Brown loveseat", "#6b4232"], table_dining_rect_1: ["Tufted leather ottoman", "#8a5530"],
+  table_dining_rect_0: ["End table", "#3a2a22"],
+  table_other_rect_5: null, storage_shelf_3: ["Record player cart", "#d9b27a"],
+  storage_shelf_0: null, storage_shelf_1: null,
+  table_other_rect_2: null, table_other_rect_0: ["Side table", "#c9b89a"],
+  table_other_rect_1: ["Gaming desk", "#c9a06a"], chair_swivel_star_back_arms_0: ["Gaming chair", "#7a2a45"],
+  table_other_rect_3: ["Office desk", "#b98a52"], chair_swivel_star_back_arms_1: ["Mesh office chair", "#4a4f5a"],
+  storage_shelf_2: null, storage_cabinet_low1_0: ["Small stand", "#3a2a22"],
+  table_other_rect_4: ["Workbench", "#2a2d33"], table_dining_rect_2: ["Box stack", "#a8835a"],
+  storage_cabinet_tall2_0: ["Built-in shelves", "#d8dde6"], chair_other_four_back_no_0: ["Hand truck", "#3a3f4a"],
+  storage_cabinet_low1_1: ["Vanity", "#e6e9f0"], sink_0: ["Vanity sink", "#e6e9f0"], toilet_0: ["Toilet", "#e6e9f0"],
+  refrigerator_0: ["Upright freezer", "#e8e4d8"], washer_dryer_0: ["LG washer + dryer", "#e6e9f0"],
+  stairs3_0: ["Stairs", "#7d8794"], stairs3_1: ["Stairs", "#7d8794"]
+};
+// Doorways cut into the scanned walls: [from, to, opening top] along the wall's long axis (m)
+const CUTS = {
+  Wall_6:  [[-1.35, -0.55, 2.03]],   // living room -> furnace / laundry hall, left of the chimney
+  Wall_8:  [[1.45, 2.25, 2.03]],     // living room -> under-stairs room, right of the chimney
+  Wall_15: [[-1.78, -1.08, 2.03]],   // hall -> bathroom
+  Wall_13: [[4.31, 6.02, 1.83]]      // fridge nook is open to the hall, soffit above
+};
+// Things RoomPlan missed, from the photos. Scan coordinates (m): [minX,minY,minZ], [maxX,maxY,maxZ]
+const BOXES = [
+  ["Brick chimney", [-0.05, 0, -0.43], [0.78, 2.2, -0.22], "#8a3b2c"],
+  ["Ms. Pac-Man cabinet", [5.3, 0, -0.43], [6.01, 1.75, 0.25], "#2b5fd9"],
+  ["Ms. Pac-Man marquee", [5.3, 1.55, -0.43], [5.36, 1.75, 0.25], "#f2c84b"],
+  ["Treadmill", [4.2, 0, 2.8], [6.01, 0.25, 3.58], "#2a2d33"],
+  ["Treadmill console", [5.75, 0.25, 2.85], [5.95, 1.4, 3.53], "#8f9aa8"],
+  ["Upright piano", [-4.75, 0, 2.92], [-3.3, 1.32, 3.58], "#4a2a1a"],
+  ["Piano keybed", [-4.7, 0.62, 2.62], [-3.35, 0.8, 2.92], "#4a2a1a"],
+  ["Wall clock", [-4.3, 1.55, 3.55], [-3.8, 2.02, 3.59], "#1a1a1a"],
+  ["Furnace", [1.9, 0, -2.3], [2.7, 1.65, -1.55], "#3a3f4a"],
+  ["Electrical panel", [2.2, 1.1, -3.51], [2.7, 1.9, -3.43], "#8f9aa8"],
+  ["Box pile", [5.35, 0, -2.15], [6.05, 0.9, -1.6], "#a8835a"],
+  ["Wire shelf", [-5.2, 0, -1.0], [-3.95, 1.85, -0.55], "#9aa3b0"],
+  ["Luggage", [-3.95, 0, -1.1], [-3.45, 0.75, -0.6], "#2a3550"],
+  ["Wire shelf", [-6.25, 0, -3.5], [-5.05, 1.8, -3.02], "#9aa3b0"],
+  ["Painting (leaning)", [-7.16, 0, 1.0], [-7.05, 0.75, 2.6], "#2e6a5e"],
+  ["Backpacks", [-7.16, 1.0, 2.35], [-6.95, 1.75, 3.45], "#7a2a35"],
+  ["Ultrawide monitor", [-6.55, 0.93, -0.27], [-5.75, 1.33, -0.22], "#11151d"],
+  ["Portrait monitor", [-5.68, 0.9, -0.27], [-5.33, 1.55, -0.22], "#11151d"],
+  ["Monitor", [-2.98, 0.86, -0.42], [-2.33, 1.25, -0.38], "#11151d"],
+  ["Portrait monitor", [-2.22, 0.86, -0.42], [-1.9, 1.45, -0.38], "#11151d"]
+];
+// Flat rugs: label, [minX, minZ, maxX, maxZ], color
+const RUGS = [
+  ["Dark grey rug", [-0.2, 0.45, 3.0, 2.45], "#33363d"],
+  ["Blue patterned rug", [-3.9, 0.7, -0.45, 2.7], "#24345a"],
+  ["Grey geometric rug", [-6.95, 0.15, -4.95, 1.9], "#4a4d55"]
+];
+// Lamps: label, x, z, base height, shade height. Each gets a warm glow
+const LAMPS = [
+  ["Table lamp", 3.46, 3.1, 0.59, 1.15],
+  ["Table lamp", -4.55, -0.2, 1.55, 2.08],
+  ["Tripod floor lamp", -1.15, 3.25, 0.0, 1.6]
+];
+const KIND = [
+  [/^sofa/, "Sofa", "#f2a65a"], [/^chair/, "Chair", "#e8c07a"], [/^table/, "Table", "#d98c5f"],
+  [/^storage/, "Shelf", "#9fb4c7"], [/^stairs/, "Stairs", "#c9ccd6"]
+];
+const m2ft = m => (m * 3.28084).toFixed(1);
+
+const stage = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+const RENDER_WIDTH = 1600; // internal render width in px: 1280 = fastest, 1920 = full 1080p
+renderer.setPixelRatio(Math.min(devicePixelRatio, RENDER_WIDTH / innerWidth));
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x0b0f17);
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0b0f17, 22, 40);
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 100);
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x2a2018, 1.6));
+const sun = new THREE.DirectionalLight(0xffe2c0, 1.1); sun.position.set(6, 12, 4); scene.add(sun);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = false; controls.autoRotate = true; controls.autoRotateSpeed = 0.35;
+controls.maxPolarAngle = Math.PI * 0.47; controls.minDistance = 3; controls.maxDistance = 30;
+
+const wallMeshes = [], pickables = [];
+const offset = new THREE.Vector3();
+let tvWorld = null, wallsRef = null, stats = "";
+const wallMat = () => new THREE.MeshStandardMaterial({ color: 0xdfe5f0, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
+const edgeMat = c => new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: 0.55 });
+
+new GLTFLoader().load("room.glb", gltf => {
+  const root = gltf.scene;
+  const box = new THREE.Box3().setFromObject(root);
+  const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
+  document.getElementById("dims").textContent =
+    `${m2ft(size.x)} × ${m2ft(size.z)} ft · ceiling ${m2ft(2.21)} ft · ${size.x.toFixed(1)} × ${size.z.toFixed(1)} m`;
+
+  const legend = new Map(), walls = {};
+  const meshes = []; root.traverse(o => { if (o.isMesh) meshes.push(o); });
+  for (const o of meshes) {
+    const n = o.name || o.parent?.name || "";
+    if (n.startsWith("Ceiling") || n.startsWith("Door")) { o.visible = false; continue; }
+    if (n.startsWith("Floor_")) {
+      const key = n.slice(6), col = ROOM_COLORS[key] || "#444b5c";
+      o.material = new THREE.MeshStandardMaterial({ color: col, roughness: 0.95 });
+      legend.set(ROOM_LABELS[key] || key, col);
+      continue;
+    }
+    if (n.startsWith("Wall_") || n.startsWith("Joint_")) {
+      if (CUTS[n]) { walls[n] = o; continue; }
+      o.material = wallMat();
+      const e = new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 25), edgeMat(0x9aa7c0));
+      o.add(e); wallMeshes.push(o, e);
+      continue;
+    }
+    if (n.startsWith("Window")) {
+      o.material = new THREE.MeshBasicMaterial({ color: 0x7fd1d8, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
+      o.userData.label = "Window"; pickables.push(o); wallMeshes.push(o);
+      continue;
+    }
+    if (OVERRIDES[n] === null) { o.visible = false; continue; }
+    const ov = OVERRIDES[n], k = KIND.find(([re]) => re.test(n));
+    o.material = new THREE.MeshStandardMaterial({ color: ov ? ov[1] : k ? k[2] : "#b0b6c4", roughness: 0.7, flatShading: true });
+    o.add(new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 25), edgeMat(0x0b0f17)));
+    o.userData.label = ov ? ov[0] : k ? k[1] : n;
+    pickables.push(o);
+  }
+
+  const addBox = (label, mn, mx, col, opts = {}) => {
+    const g = new THREE.BoxGeometry(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]);
+    const mat = opts.mat || new THREE.MeshStandardMaterial({ color: col, roughness: 0.7, flatShading: true });
+    const m = new THREE.Mesh(g, mat);
+    m.position.set((mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2);
+    const e = new THREE.LineSegments(new THREE.EdgesGeometry(g), edgeMat(opts.edge ?? 0x0b0f17));
+    m.add(e); root.add(m);
+    if (label) { m.userData.label = label; pickables.push(m); }
+    return [m, e];
+  };
+
+  // Rebuild cut walls as pieces around each doorway
+  for (const [name, cuts] of Object.entries(CUTS)) {
+    const w = walls[name]; if (!w) continue;
+    w.visible = false;
+    const b = new THREE.Box3().setFromObject(w), alongX = (b.max.x - b.min.x) > (b.max.z - b.min.z);
+    const lo = alongX ? b.min.x : b.min.z, hi = alongX ? b.max.x : b.max.z;
+    const piece = (a, c, y0, y1) => {
+      if (c - a < 0.01 || y1 - y0 < 0.01) return;
+      const mn = alongX ? [a, y0, b.min.z] : [b.min.x, y0, a], mx = alongX ? [c, y1, b.max.z] : [b.max.x, y1, c];
+      wallMeshes.push(...addBox(null, mn, mx, null, { mat: wallMat(), edge: 0x9aa7c0 }));
+    };
+    let cur = lo;
+    for (const [a, c, top] of [...cuts].sort((p, q) => p[0] - q[0])) {
+      piece(cur, a, b.min.y, b.max.y);
+      piece(a, c, top, b.max.y);
+      cur = c;
+    }
+    piece(cur, hi, b.min.y, b.max.y);
+  }
+
+  BOXES.forEach(([l, mn, mx, c]) => addBox(l, mn, mx, c));
+  RUGS.forEach(([l, [x0, z0, x1, z1], c]) => addBox(l, [x0, 0.006, z0], [x1, 0.02, z1], c));
+
+  // Bean bag and water heater are round, so they get their own shapes
+  const bean = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), new THREE.MeshStandardMaterial({ color: 0x4a4f5a, roughness: 1, flatShading: true }));
+  bean.scale.set(1, 0.6, 1); bean.position.set(-0.5, 0.27, 0.75); bean.userData.label = "Bean bag"; root.add(bean); pickables.push(bean);
+  const heater = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 1.5, 12), new THREE.MeshStandardMaterial({ color: 0x6b5a4a, flatShading: true }));
+  heater.position.set(3.25, 0.75, -3.2); heater.userData.label = "Water heater"; root.add(heater); pickables.push(heater);
+
+  for (const [label, x, z, y0, y1] of LAMPS) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.06, y1 - y0 - 0.25, 6), new THREE.MeshStandardMaterial({ color: 0x8f9aa8 }));
+    pole.position.set(x, y0 + (y1 - y0 - 0.25) / 2, z); root.add(pole);
+    const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.22, 0.25, 14, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0xf6e3c0, emissive: 0xf2b06a, emissiveIntensity: 0.9, side: THREE.DoubleSide }));
+    shade.position.set(x, y1 - 0.125, z); shade.userData.label = label; root.add(shade); pickables.push(shade);
+    const l = new THREE.PointLight(0xffc27a, 2.2, 3.5, 1.8); l.position.set(x, y1 - 0.15, z); root.add(l);
+  }
+
+  // Monitors: the gaming setup is on, the office desk is off
+  const screenAt = (x0, x1, y0, y1, z, col) => {
+    const s = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0 - 0.03, y1 - y0 - 0.03), new THREE.MeshBasicMaterial({ color: col }));
+    s.position.set((x0 + x1) / 2, (y0 + y1) / 2, z); root.add(s);
+  };
+  screenAt(-6.55, -5.75, 0.93, 1.33, -0.215, 0x6d7cff);
+  screenAt(-5.68, -5.33, 0.9, 1.55, -0.215, 0x9a8cff);
+  const deskGlow = new THREE.PointLight(0x7d86ff, 1.6, 2.5, 1.8); deskGlow.position.set(-6.0, 1.15, 0.2); root.add(deskGlow);
+
+  // ---- Detail pass: shelves with contents, foosball, desk peripherals ----
+  let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const pick = a => a[Math.floor(rnd() * a.length)];
+  const BOOK = ["#8c2f2f", "#2f4f8c", "#c9a227", "#3f7a4a", "#e6e9f0", "#5a2f6a", "#d96a3a", "#1f2a3a"];
+  const CASE = { xbox: "#2f8a3a", wii: "#e6e9f0", ps: "#2a55c9", dvd: "#3a3f4a", disney: "#2f5fbf" };
+
+  // Fill one shelf cell [x0,x1] at height y, depth z0..z1 with a type of content
+  const fill = (kind, x0, x1, y, zBack, zFront, hMax, label) => {
+    const d = Math.min(0.2, Math.abs(zFront - zBack) * 0.8), zc = zBack + (zFront - zBack) * 0.4;
+    const zz = [zc - d / 2, zc + d / 2].sort((a, b) => a - b);
+    let x = x0 + 0.02;
+    if (kind === "console") {
+      const c = pick([["Xbox 360", "#e6e9f0", 0.3, 0.08], ["GameCube", "#5a4aa0", 0.16, 0.11], ["Wii", "#e6e9f0", 0.05, 0.16], ["Original Xbox", "#1f2a3a", 0.32, 0.09]]);
+      addBox(label + ": " + c[0], [x, y, zz[0] - 0.04], [Math.min(x + c[2], x1 - 0.02), y + c[3], zz[1] + 0.04], c[1]);
+      x += c[2] + 0.04; kind = "games";
+    }
+    if (kind === "boardgames") {
+      let yy = y;
+      while (yy + 0.07 < y + hMax - 0.02) {
+        const h = 0.05 + rnd() * 0.04;
+        addBox(label + ": board game", [x0 + 0.02, yy, zz[0] - 0.06], [x1 - 0.03 - rnd() * 0.06, yy + h, zz[1] + 0.06], pick(BOOK));
+        yy += h + 0.005;
+      }
+      return;
+    }
+    if (kind === "figures") {
+      while (x + 0.07 < x1) {
+        const h = 0.07 + rnd() * 0.06, c = pick(["#f2c84b", "#d96a3a", "#e6e9f0", "#8c2f2f", "#3a3f4a"]);
+        addBox(label + ": figure", [x, y, zc - 0.03], [x + 0.05, y + h, zc + 0.03], c);
+        x += 0.07 + rnd() * 0.04;
+      }
+      return;
+    }
+    if (kind === "vinyl") {
+      addBox(label + ": vinyl records", [x, y, zz[0] - 0.08], [x1 - 0.02, y + Math.min(0.31, hMax - 0.02), zz[1] + 0.08], "#1a1a1a");
+      return;
+    }
+    if (kind === "empty") return;
+    // books, games, dvds: a row of upright spines
+    const caseCol = { games: () => pick([CASE.xbox, CASE.wii, CASE.ps, CASE.xbox]), dvd: () => pick([CASE.dvd, CASE.disney, "#c9a227", "#8c2f2f"]), books: () => pick(BOOK) }[kind] || (() => pick(BOOK));
+    const name = { games: "game cases", dvd: "DVDs", books: "books" }[kind] || "books";
+    while (x < x1 - 0.04) {
+      const w = kind === "books" ? 0.025 + rnd() * 0.035 : 0.015, h = kind === "books" ? Math.min(hMax - 0.02, 0.16 + rnd() * 0.12) : Math.min(hMax - 0.02, 0.19);
+      if (kind === "books" && rnd() < 0.12) { x += 0.04; continue; }
+      addBox(label + ": " + name, [x, y, zz[0]], [x + w, y + h, zz[1]], caseCol(), { edge: 0x05070a });
+      x += w + 0.002;
+    }
+  };
+
+  // Open bookcase against a wall. face = +1 opens toward +z, -1 toward -z
+  const bookcase = (label, mn, mx, face, cols, rows, plan, wood) => {
+    const t = 0.025, back = face > 0 ? mn[2] : mx[2], front = face > 0 ? mx[2] : mn[2];
+    const w = mx[0] - mn[0], h = mx[1] - mn[1];
+    addBox(label, [mn[0], 0, face > 0 ? mn[2] : mx[2] - t], [mx[0], h, face > 0 ? mn[2] + t : mx[2]], wood);
+    for (let c = 0; c <= cols; c++) {
+      const x = mn[0] + (w - t) * c / cols;
+      addBox(label, [x, 0, mn[2]], [x + t, h, mx[2]], wood);
+    }
+    for (let r = 0; r <= rows; r++) {
+      const y = r === rows ? h - t : (h - t) * r / rows;
+      addBox(label, [mn[0], y, mn[2]], [mx[0], y + t, mx[2]], wood);
+    }
+    const cellH = (h - t) / rows;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const kind = plan[(rows - 1 - r) % plan.length][c % plan[0].length];
+      const x0 = mn[0] + (w - t) * c / cols + t, x1 = mn[0] + (w - t) * (c + 1) / cols;
+      fill(kind, x0, x1, cellH * r + t, back + face * t, front, cellH - t, label);
+    }
+  };
+
+  // West pair of tall bookcases: consoles + games (photos: GameCube, Xbox 360, Wii, game rows)
+  bookcase("Bookshelves", [-5.99, 0, 3.2], [-5.41, 2.23, 3.59], -1, 1, 6,
+    [["figures"], ["games"], ["console"], ["games"], ["console"], ["boardgames"]], "#6a3a26");
+  bookcase("Bookshelves", [-5.4, 0, 3.2], [-4.82, 2.23, 3.59], -1, 1, 6,
+    [["figures"], ["console"], ["games"], ["games"], ["console"], ["empty"]], "#6a3a26");
+  // East pair: board games, cameras, odds and ends
+  bookcase("Bookshelves", [-3.21, 0, 3.06], [-2.58, 2.23, 3.59], -1, 1, 6,
+    [["books"], ["figures"], ["figures"], ["boardgames"], ["boardgames"], ["empty"]], "#6a3a26");
+  bookcase("Bookshelves", [-2.57, 0, 3.06], [-1.93, 2.23, 3.59], -1, 1, 6,
+    [["figures"], ["figures"], ["books"], ["boardgames"], ["books"], ["empty"]], "#6a3a26");
+  // Cube shelf (4x4): VR headset + figures + vinyl on top row, manga, DVDs, cables at the bottom
+  bookcase("Cube shelf", [-4.8, 0, -0.48], [-3.25, 1.55, 0.02], 1, 4, 4,
+    [["figures", "figures", "figures", "vinyl"], ["books", "figures", "dvd", "empty"], ["books", "books", "dvd", "empty"], ["empty", "empty", "empty", "empty"]], "#2a201c");
+  // Under the gaming desk shelf + record cart contents
+  addBox("Record player", [-0.75, 0.91, 3.0], [-0.3, 1.0, 3.35], "#1a1a1a");
+  addBox("Bookshelf speaker", [-0.83, 0.91, 3.05], [-0.72, 1.07, 3.2], "#1a1a1a");
+  addBox("Bookshelf speaker", [-0.25, 0.91, 3.05], [-0.14, 1.07, 3.2], "#1a1a1a");
+
+  // Foosball table: cabinet, green field, 8 rods with players (long axis runs along x)
+  {
+    const x0 = -1.84, x1 = -0.58, z0 = 1.42, z1 = 2.09, top = 0.86;
+    addBox("Foosball table", [x0, 0.6, z0], [x1, top, z0 + 0.04], "#1a1a1a");
+    addBox("Foosball table", [x0, 0.6, z1 - 0.04], [x1, top, z1], "#1a1a1a");
+    addBox("Foosball table", [x0, 0.6, z0], [x0 + 0.04, top, z1], "#1a1a1a");
+    addBox("Foosball table", [x1 - 0.04, 0.6, z0], [x1, top, z1], "#1a1a1a");
+    addBox("Foosball field", [x0 + 0.04, 0.62, z0 + 0.04], [x1 - 0.04, 0.64, z1 - 0.04], "#2f8a3a");
+    addBox("Foosball field line", [(x0 + x1) / 2 - 0.004, 0.641, z0 + 0.04], [(x0 + x1) / 2 + 0.004, 0.645, z1 - 0.04], "#e6e9f0");
+    for (const [lx, lz] of [[x0 + 0.05, z0 + 0.05], [x1 - 0.1, z0 + 0.05], [x0 + 0.05, z1 - 0.1], [x1 - 0.1, z1 - 0.1]])
+      addBox("Foosball table", [lx, 0, lz], [lx + 0.05, 0.6, lz + 0.05], "#1a1a1a");
+    const counts = [1, 2, 3, 5, 5, 3, 2, 1], team = ["#e6e9f0", "#e6e9f0", "#c93a3a", "#e6e9f0", "#c93a3a", "#e6e9f0", "#c93a3a", "#c93a3a"];
+    counts.forEach((n, i) => {
+      const x = x0 + 0.1 + (x1 - x0 - 0.2) * i / 7;
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, z1 - z0 + 0.3, 6), new THREE.MeshStandardMaterial({ color: 0xc9ccd6, metalness: 0.6, roughness: 0.3 }));
+      rod.rotation.x = Math.PI / 2; rod.position.set(x, 0.76, (z0 + z1) / 2); root.add(rod);
+      addBox("Foosball handle", [x - 0.015, 0.745, z0 - 0.2], [x + 0.015, 0.775, z0 - 0.12], "#1a1a1a");
+      for (let p = 0; p < n; p++) {
+        const z = z0 + 0.04 + (z1 - z0 - 0.08) * (p + 1) / (n + 1);
+        addBox("Foosball player", [x - 0.012, 0.65, z - 0.012], [x + 0.012, 0.8, z + 0.012], team[i]);
+      }
+    });
+  }
+
+  // Desk peripherals
+  addBox("RGB keyboard", [-6.35, 0.85, 0.05], [-5.9, 0.875, 0.2], "#3a2f6a");
+  addBox("Mouse", [-5.8, 0.85, 0.09], [-5.74, 0.87, 0.19], "#1a1a1a");
+  addBox("Desk mat", [-6.5, 0.85, -0.05], [-5.6, 0.853, 0.3], "#2a2d33");
+  addBox("Mic arm", [-5.65, 0.85, 0.05], [-5.62, 1.35, 0.08], "#1a1a1a");
+  addBox("Speaker", [-5.22, 0, -0.33], [-4.95, 0.45, -0.05], "#5a3a26");
+  addBox("Blue/pink keyboard", [-2.78, 0.8, -0.05], [-2.33, 0.825, 0.1], "#7a8cff");
+  addBox("Mouse", [-2.22, 0.8, -0.03], [-2.16, 0.82, 0.07], "#9aa3b0");
+  addBox("Desk mat", [-2.95, 0.8, -0.12], [-2.0, 0.803, 0.16], "#1a1a1a");
+  addBox("Headphones", [-3.05, 0.8, -0.2], [-2.92, 0.86, -0.08], "#1a1a1a");
+  screenAt(-2.98, -2.33, 0.86, 1.25, -0.375, 0x1c2230);
+  screenAt(-2.22, -1.9, 0.86, 1.45, -0.375, 0x1c2230);
+
+  // The TV: 65" on the hearth, facing the sectional
+  const tvCenter = new THREE.Vector3(0.35, 0.47 + 0.42, -0.14);
+  addBox("TCL Google TV (65\")", [tvCenter.x - 0.72, 0.47, -0.21], [tvCenter.x + 0.72, 1.31, -0.11], "#11151d");
+  screenAt(tvCenter.x - 0.69, tvCenter.x + 0.69, 0.5, 1.28, -0.105, 0x7fd1d8);
+  const glow = new THREE.PointLight(0x7fd1d8, 6, 5, 1.6);
+  glow.position.set(tvCenter.x, tvCenter.y, 0.6); root.add(glow);
+  tvWorld = tvCenter;
+
+  const leg = document.getElementById("legend");
+  for (const [label, col] of legend) leg.insertAdjacentHTML("beforeend", `<span><i style="background:${col}"></i>${label}</span>`);
+
+  // ---- Batch for the TV: merge every static mesh into one draw call per material ----
+  // The original meshes stay off-screen as invisible hit targets for the hover labels.
+  root.updateMatrixWorld(true);
+  const wallSet = new Set(wallMeshes), batches = new Map(), lights = [];
+  root.traverse(o => {
+    if (o.isLight) { lights.push(o); return; }
+    if (!(o.isMesh || o.isLineSegments)) return;
+    for (let p = o; p; p = p.parent) if (!p.visible) return;
+    const m = o.material, wall = wallSet.has(o) || wallSet.has(o.parent);
+    const key = [o.isLineSegments ? "L" : "M", wall ? "w" : "s", m.type, m.color.getHexString(),
+      m.emissive ? m.emissive.getHexString() + m.emissiveIntensity : "", m.opacity, m.side, m.flatShading, m.metalness].join("|");
+    let g = o.geometry.clone().applyMatrix4(o.matrixWorld);
+    if (g.index) g = g.toNonIndexed();
+    for (const a of Object.keys(g.attributes)) if (a !== "position" && a !== "normal") g.deleteAttribute(a);
+    if (!o.isLineSegments && !g.attributes.normal) g.computeVertexNormals();
+    if (o.isLineSegments && g.attributes.normal) g.deleteAttribute("normal");
+    if (!batches.has(key)) batches.set(key, { line: o.isLineSegments, wall, mat: m, geos: [] });
+    batches.get(key).geos.push(g);
+  });
+  const world = new THREE.Group(), wallGroup = new THREE.Group();
+  for (const b of batches.values()) {
+    const g = mergeGeometries(b.geos, false);
+    if (!g) continue;
+    const m = b.mat, mat = (b.line || m.isMeshBasicMaterial) ? m : new THREE.MeshLambertMaterial({
+      color: m.color, emissive: m.emissive || 0x000000, emissiveIntensity: m.emissiveIntensity ?? 1,
+      transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite, side: m.side, flatShading: m.flatShading });
+    const obj = b.line ? new THREE.LineSegments(g, mat) : new THREE.Mesh(g, mat);
+    (b.wall ? wallGroup : world).add(obj);
+  }
+  world.add(wallGroup);
+  for (const l of lights.filter(l => !l.isPointLight)) { const c = l.clone(); c.position.setFromMatrixPosition(l.matrixWorld); world.add(c); }
+  wallsRef = wallGroup;
+
+  offset.set(-center.x, -box.min.y, -center.z);
+  world.position.copy(offset);
+  scene.add(world);
+  root.position.copy(offset);
+  root.updateMatrixWorld(true);   // not in the scene: picking only
+  stats = `${batches.size} draw calls (was ${pickables.length + wallMeshes.length}+)`;
+  controls.target.set(0, -1.6, 0);
+  camera.position.set(13, 16, 19);
+  document.getElementById("status").hidden = true;
+}, undefined, err => {
+  document.getElementById("status").textContent = "The scan failed to load: " + err.message;
+});
+
+// hover labels
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(), tip = document.getElementById("tip");
+renderer.domElement.addEventListener("pointermove", e => {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObjects(pickables, false)[0];
+  if (!hit) { tip.hidden = true; return; }
+  const o = hit.object, b = new THREE.Box3().setFromObject(o), s = b.getSize(new THREE.Vector3());
+  tip.innerHTML = `<b>${o.userData.label}</b><small>${m2ft(s.x)} × ${m2ft(s.z)} ft · ${m2ft(s.y)} ft tall</small>`;
+  tip.style.left = e.clientX + "px"; tip.style.top = e.clientY + "px"; tip.hidden = false;
+});
+renderer.domElement.addEventListener("pointerleave", () => { tip.hidden = true; });
+
+const toggle = (id, fn) => {
+  const b = document.getElementById(id);
+  b.addEventListener("click", () => { const on = b.getAttribute("aria-pressed") !== "true"; b.setAttribute("aria-pressed", on); fn(on); });
+};
+toggle("spin", on => { controls.autoRotate = on; });
+toggle("walls", on => { if (wallsRef) wallsRef.visible = on; });
+// Views: dollhouse orbit, top-down plan, and sitting on the sectional looking at the TV
+const VIEWS = ["Top", "Couch", "3D"];
+let vi = 0;
+document.getElementById("view").addEventListener("click", e => {
+  const v = VIEWS[vi]; vi = (vi + 1) % VIEWS.length; e.currentTarget.textContent = VIEWS[vi];
+  if (v === "Top") { controls.target.set(0, -1.6, 0); camera.position.set(0, 22, 0.01); }
+  else if (v === "Couch" && tvWorld) {
+    const tv = tvWorld.clone().add(offset);
+    camera.position.set(tv.x + 1.2, 1.1, 3.0 + offset.z);
+    controls.target.copy(tv);
+  } else { controls.target.set(0, -1.6, 0); camera.position.set(13, 16, 19); }
+  if (v === "Couch") { controls.autoRotate = false; document.getElementById("spin").setAttribute("aria-pressed", "false"); }
+});
+
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  controls.autoRotate = false; document.getElementById("spin").setAttribute("aria-pressed", "false");
+}
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+const dimsEl = document.getElementById("dims"); let shown = false;
+let lastFrame = 0;
+renderer.setAnimationLoop(now => {
+  if (now - lastFrame < 33) return;   // 30 fps is plenty for a slowly drifting background
+  lastFrame = now;
+  controls.update(); renderer.render(scene, camera);
+  if (stats && !shown) { shown = true; dimsEl.textContent += " · " + stats; }
+});
+</script>
+
+</body>
+</html>

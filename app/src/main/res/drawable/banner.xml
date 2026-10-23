@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 320x180 TV banner: dark room, amber floor, cyan TV glow -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp" android:height="180dp"
+    android:viewportWidth="320" android:viewportHeight="180">
+    <path android:fillColor="#0B0F17" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#3B4A7A" android:pathData="M60,120 L160,70 L260,120 L160,170 Z" />
+    <path android:fillColor="#F2A65A" android:pathData="M150,118 L190,98 L210,108 L170,128 Z" />
+    <path android:fillColor="#7FD1D8" android:pathData="M112,92 L150,73 L150,95 L112,114 Z" />
+</vector>
