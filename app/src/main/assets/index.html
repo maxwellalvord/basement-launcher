@@ -28,7 +28,7 @@ body { background: var(--ground); color: var(--ink); font-family: var(--mono); o
 canvas { display: block; outline: none; }
 .hud {
   position: fixed; pointer-events: none; display: grid; gap: 6px;
-  top: calc(20px + env(safe-area-inset-top, 0px));
+  top: calc(110px + env(safe-area-inset-top, 0px));
   left: max(20px, env(safe-area-inset-left, 0px));
 }
 .hud h1 { margin: 0; font-family: var(--display); font-weight: 800; font-size: clamp(28px, 5vw, 52px); letter-spacing: -0.02em; line-height: 1; text-wrap: balance; }
@@ -147,7 +147,9 @@ canvas { display: block; outline: none; }
   }
 
   function focus(n) {
+    const prev = i;
     i = Math.max(0, Math.min(apps.length - 1, n));
+    if (i !== prev) dispatchEvent(new CustomEvent("dock:focus", { detail: i }));
     [...dock.children].forEach((el, k) => el.classList.toggle("focus", k === i));
     nameEl.textContent = apps[i] ? apps[i].label : "";
     // keep the focused tile on screen: slide the row once focus passes the middle
@@ -158,6 +160,7 @@ canvas { display: block; outline: none; }
 
   function open() {
     const a = apps[i]; if (!a) return;
+    dispatchEvent(new CustomEvent("dock:launch", { detail: a }));
     if (!window.Android) { console.log("would launch", a.pkg); return; }
     if (a.pkg === "__settings") window.Android.openSettings(); else window.Android.launch(a.pkg);
   }
@@ -169,6 +172,7 @@ canvas { display: block; outline: none; }
     else return;
     e.preventDefault();
   });
+  window.dock = { index: () => i, apps: () => apps };
   window.onHome = () => focus(0);
   window.onBack = () => focus(0);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); }); // pick up new installs
@@ -183,6 +187,7 @@ canvas { display: block; outline: none; }
 })();
 </script>
 
+<script src="lilly.js"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",

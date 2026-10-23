@@ -14,6 +14,7 @@ import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -65,6 +66,8 @@ class MainActivity : Activity() {
             }
         }
         setContentView(web)
+        // While the home screen is showing, keep the display on: no Google ambient slideshow. Lilly is the screensaver now.
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         registerReceiver(packageChanged, IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REMOVED)
@@ -94,10 +97,12 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         web.onResume(); web.resumeTimers()
+        web.evaluateJavascript("window.onResumeApp && window.onResumeApp()", null)
     }
 
     // Stop rendering the 3D scene while another app is in front (saves the TV's GPU and heat)
     override fun onPause() {
+        web.evaluateJavascript("window.onPauseApp && window.onPauseApp()", null)
         web.onPause(); web.pauseTimers()
         super.onPause()
     }
