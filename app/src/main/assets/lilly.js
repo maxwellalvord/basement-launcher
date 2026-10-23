@@ -16,7 +16,7 @@
     }
   };
   const C = CFG.c;
-  const VIDEO = /jellyfin|youtube|netflix|plex|hulu|disney|amazon|prime|hbo|\.max|twitch|crunchyroll|tubi|pluto|peacock|paramount/i;
+  const VIDEO = /__input:|jellyfin|youtube|netflix|plex|hulu|disney|amazon|prime|hbo|\.max|twitch|crunchyroll|tubi|pluto|peacock|paramount/i;
   const now = () => performance.now();
   const rand = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));

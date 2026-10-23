@@ -9,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.drawable.Drawable
+import android.media.tv.TvContract
+import android.media.tv.TvInputManager
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Base64
@@ -148,6 +150,36 @@ class MainActivity : Activity() {
                     return@runOnUiThread
                 }
                 startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
+
+        /** HDMI and other passthrough inputs. A device that announced itself over HDMI-CEC (e.g. "PlayStation 5")
+         *  shows up as a child of its HDMI port; we show the device name instead of the bare port. */
+        @JavascriptInterface
+        fun inputs(): String {
+            val tim = getSystemService(Context.TV_INPUT_SERVICE) as? TvInputManager ?: return "[]"
+            val all = tim.tvInputList.filter { it.isPassthroughInput && !it.isHidden(this@MainActivity) }
+            val parentsWithChildren = all.mapNotNull { it.parentId }.toSet()
+            val out = JSONArray()
+            for (info in all) {
+                if (info.id in parentsWithChildren) continue
+                val custom = info.loadCustomLabel(this@MainActivity)?.toString()
+                val label = if (!custom.isNullOrBlank()) custom else info.loadLabel(this@MainActivity).toString()
+                out.put(JSONObject().put("id", info.id).put("label", label))
+            }
+            return out.toString()
+        }
+
+        /** Hands the input to the TV's own live-TV app, tuned straight to that HDMI port. */
+        @JavascriptInterface
+        fun switchInput(id: String) {
+            runOnUiThread {
+                try {
+                    val uri = TvContract.buildChannelUriForPassthroughInput(id)
+                    startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (e: Exception) {
+                    Log.w("Basement", "Could not switch to input $id", e)
+                }
             }
         }
 
