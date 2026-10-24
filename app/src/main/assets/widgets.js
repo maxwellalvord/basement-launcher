@@ -23,7 +23,7 @@
   // ---------- DOM ----------
   const css = document.createElement("style");
   css.textContent = `
-  .widgets { position: fixed; right: max(28px, env(safe-area-inset-right, 0px)); top: calc(110px + env(safe-area-inset-top, 0px));
+  .widgets { position: fixed; right: max(28px, env(safe-area-inset-right, 0px)); bottom: calc(48px + env(safe-area-inset-bottom, 0px));
     width: 250px; display: grid; gap: 10px; z-index: 20; pointer-events: none; transition: opacity 1.2s; }
   body.ambient .widgets { opacity: 0.75; }
   .card { background: rgba(15,19,28,0.82); border: 1px solid #2a3346; border-radius: 10px; padding: 11px 13px; position: relative; }
