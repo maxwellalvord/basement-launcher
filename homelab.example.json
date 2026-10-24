@@ -1,0 +1,12 @@
+{
+  "homelab": "http://192.168.68.53",
+  "piholePort": 8053,
+  "piholePassword": "PASTE-A-PIHOLE-APP-PASSWORD-HERE",
+  "kumaPort": 3001,
+  "kumaSlug": "home",
+  "weather": { "lat": 45.6387, "lon": -122.6615, "place": "Vancouver" },
+  "minecraft": [
+    { "name": "Lakeside town", "host": "192.168.68.53", "port": 25565 },
+    { "name": "ATM10 Sky", "host": "192.168.68.53", "port": 25566 }
+  ]
+}

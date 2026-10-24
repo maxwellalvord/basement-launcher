@@ -4,3 +4,4 @@ app/build/
 local.properties
 *.apk
 app/src/main/assets/room.glb
+app/src/main/assets/homelab.json

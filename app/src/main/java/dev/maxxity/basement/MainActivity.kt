@@ -26,6 +26,13 @@ import androidx.webkit.WebViewAssetLoader
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.URL
+import java.util.concurrent.Executors
 
 /**
  * The whole launcher is one full-screen WebView.
@@ -35,6 +42,9 @@ import java.io.ByteArrayOutputStream
 class MainActivity : Activity() {
 
     private lateinit var web: WebView
+
+    // Background threads for homelab calls, so the page never waits on the network
+    private val io = Executors.newFixedThreadPool(3)
 
     // Building the app list renders every icon to PNG, which is slow. Do it once, redo it only when apps change
     @Volatile private var appsCache: String? = null
@@ -92,6 +102,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        io.shutdownNow()
         unregisterReceiver(packageChanged)
         super.onDestroy()
     }
@@ -183,9 +194,114 @@ class MainActivity : Activity() {
             }
         }
 
+        /**
+         * HTTP to the homelab on the page's behalf. The page is served over https, so the WebView blocks its
+         * fetch() calls to plain-http LAN services (mixed content). Native code isn't bound by that rule.
+         * Only private LAN addresses are allowed, so the page can't be used to call out to the internet.
+         * The answer comes back asynchronously through window.__native(id, status, body).
+         */
+        @JavascriptInterface
+        fun request(id: String, method: String, url: String, headersJson: String, body: String) {
+            io.execute {
+                try {
+                    val u = URL(url)
+                    if ((u.protocol != "http" && u.protocol != "https") || !isLan(u.host)) {
+                        reply(id, -1, "blocked: $url is not a LAN address"); return@execute
+                    }
+                    val c = u.openConnection() as HttpURLConnection
+                    c.requestMethod = method
+                    c.connectTimeout = 4000
+                    c.readTimeout = 6000
+                    val h = JSONObject(headersJson.ifBlank { "{}" })
+                    for (k in h.keys()) c.setRequestProperty(k, h.getString(k))
+                    if (body.isNotEmpty()) {
+                        c.doOutput = true
+                        c.outputStream.use { it.write(body.toByteArray()) }
+                    }
+                    val code = c.responseCode
+                    val stream = if (code >= 400) c.errorStream else c.inputStream
+                    val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                    c.disconnect()
+                    reply(id, code, text)
+                } catch (e: Exception) {
+                    reply(id, -1, e.toString())
+                }
+            }
+        }
+
+        /**
+         * Minecraft "Server List Ping": the same request the multiplayer menu sends to show players online.
+         * Plain TCP to the server port, no AMP login needed.
+         */
+        @JavascriptInterface
+        fun mcPing(id: String, host: String, port: Int) {
+            io.execute {
+                try {
+                    if (!isLan(host)) { reply(id, -1, "blocked: $host is not a LAN address"); return@execute }
+                    Socket().use { s ->
+                        s.connect(InetSocketAddress(host, port), 3000)
+                        s.soTimeout = 4000
+                        val out = DataOutputStream(s.getOutputStream())
+                        val inp = DataInputStream(s.getInputStream())
+                        val packet = ByteArrayOutputStream()
+                        DataOutputStream(packet).apply {
+                            writeByte(0x00)                       // handshake packet id
+                            writeVarInt(this, 767)                // protocol version (any value works for status)
+                            val hb = host.toByteArray()
+                            writeVarInt(this, hb.size); write(hb) // server address
+                            writeShort(port)                      // server port
+                            writeVarInt(this, 1)                  // next state: status
+                        }
+                        writeVarInt(out, packet.size()); out.write(packet.toByteArray())
+                        out.writeByte(0x01); out.writeByte(0x00)  // status request: length 1, id 0
+                        out.flush()
+                        readVarInt(inp)                           // response length
+                        readVarInt(inp)                           // packet id
+                        val len = readVarInt(inp)
+                        val buf = ByteArray(len)
+                        inp.readFully(buf)
+                        reply(id, 200, String(buf, Charsets.UTF_8))
+                    }
+                } catch (e: Exception) {
+                    reply(id, -1, e.toString())
+                }
+            }
+        }
+
         @JavascriptInterface
         fun openSettings() {
             runOnUiThread { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        }
+    }
+
+    private fun isLan(host: String): Boolean =
+        host == "homelab" || host.startsWith("192.168.") || host.startsWith("10.") ||
+            Regex("^172\\.(1[6-9]|2\\d|3[01])\\.").containsMatchIn(host)
+
+    private fun reply(id: String, status: Int, body: String) {
+        val js = "window.__native && window.__native(${JSONObject.quote(id)}, $status, ${JSONObject.quote(body)})"
+        runOnUiThread { web.evaluateJavascript(js, null) }
+    }
+
+    // Minecraft's variable-length integers: 7 bits per byte, high bit means "more bytes follow"
+    private fun writeVarInt(o: DataOutputStream, value: Int) {
+        var v = value
+        while (true) {
+            if ((v and 0x7F.inv()) == 0) { o.writeByte(v); return }
+            o.writeByte((v and 0x7F) or 0x80)
+            v = v ushr 7
+        }
+    }
+
+    private fun readVarInt(i: DataInputStream): Int {
+        var result = 0
+        var n = 0
+        while (true) {
+            val b = i.readByte().toInt()
+            result = result or ((b and 0x7F) shl (7 * n))
+            n++
+            if (n > 5) throw RuntimeException("VarInt too long")
+            if ((b and 0x80) == 0) return result
         }
     }
 

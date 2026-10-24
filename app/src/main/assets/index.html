@@ -71,7 +71,9 @@ canvas { display: block; outline: none; }
 .hud .date { font-family: var(--display); font-weight: 600; font-size: 20px; color: var(--ink); }
 .shade { position: fixed; inset: auto 0 0 0; height: 46%; pointer-events: none;
   background: linear-gradient(to top, rgba(11,15,23,0.92), rgba(11,15,23,0)); }
-.dock-wrap { position: fixed; left: 0; right: 0; bottom: 36px; overflow: hidden; padding: 18px 0; }
+/* the row stops short of the widget column on the right (250px cards + 28px margin + 22px gap) */
+.dock-wrap { position: fixed; left: 0; right: calc(300px + env(safe-area-inset-right, 0px)); bottom: 36px; overflow: hidden; padding: 18px 0;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 60px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 60px), transparent); }
 .dock-label { position: fixed; left: 48px; bottom: 182px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
 .dock { display: flex; gap: 18px; padding: 0 48px; transition: transform 180ms ease-out; will-change: transform; }
 .tile { flex: 0 0 auto; width: 192px; height: 108px; border-radius: 10px; overflow: hidden; position: relative;
@@ -160,7 +162,7 @@ canvas { display: block; outline: none; }
     [...dock.children].forEach((el, k) => el.classList.toggle("focus", k === i));
     nameEl.textContent = apps[i] ? apps[i].label : "";
     // keep the focused tile on screen: slide the row once focus passes the middle
-    const step = 192 + 18, visible = Math.floor((innerWidth - 96) / step);
+    const step = 192 + 18, visible = Math.max(1, Math.floor((dock.parentElement.clientWidth - 96) / step));
     const shift = Math.max(0, Math.min(i - Math.floor(visible / 2), apps.length - visible));
     dock.style.transform = `translateX(${-shift * step}px)`;
   }
@@ -197,6 +199,7 @@ canvas { display: block; outline: none; }
 </script>
 
 <script src="lilly.js"></script>
+<script src="widgets.js"></script>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
@@ -295,7 +298,7 @@ stage.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x0b0f17, 22, 40);
 const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 100);
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x2a2018, 1.6));
+const hemi = new THREE.HemisphereLight(0xbfd4ff, 0x2a2018, 1.6); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffe2c0, 1.1); sun.position.set(6, 12, 4); scene.add(sun);
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -305,6 +308,15 @@ controls.maxPolarAngle = Math.PI * 0.47; controls.minDistance = 3; controls.maxD
 const wallMeshes = [], pickables = [];
 const offset = new THREE.Vector3();
 let tvWorld = null, wallsRef = null, stats = "";
+// Basement windows show what's actually outside (set from the weather widget)
+const windowMats = [];
+let outsideWet = false;
+window.setOutside = ({ isDay, golden, wet }) => {
+  const col = !isDay ? 0x24305a : golden ? 0xf2a65a : wet ? 0x8fa0b3 : 0xcfe9ff;
+  for (const m of windowMats) { m.color.setHex(col); m.opacity = isDay ? 0.65 : 0.5; }
+  hemi.intensity = !isDay ? 1.05 : wet ? 1.35 : 1.6;   // the room is darker at night and on grey days
+  outsideWet = wet;
+};
 const wallMat = () => new THREE.MeshStandardMaterial({ color: 0xdfe5f0, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide });
 const edgeMat = c => new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: 0.55 });
 
@@ -335,6 +347,7 @@ new GLTFLoader().load("room.glb", gltf => {
     }
     if (n.startsWith("Window")) {
       o.material = new THREE.MeshBasicMaterial({ color: 0x7fd1d8, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false });
+      windowMats.push(o.material);
       o.userData.label = "Window"; pickables.push(o); wallMeshes.push(o);
       continue;
     }
@@ -582,6 +595,7 @@ new GLTFLoader().load("room.glb", gltf => {
   controls.target.set(0, -1.6, 0);
   camera.position.set(13, 16, 19);
   document.getElementById("status").hidden = true;
+  if (window.__outside) window.setOutside(window.__outside);
 }, undefined, err => {
   document.getElementById("status").textContent = "The scan failed to load: " + err.message;
 });
@@ -631,6 +645,7 @@ const dimsEl = document.getElementById("dims"); let shown = false;
 let lastFrame = 0;
 renderer.setAnimationLoop(now => {
   if (now - lastFrame < 33) return;   // 30 fps is plenty for a slowly drifting background
+  if (outsideWet) for (const m of windowMats) m.opacity = 0.55 + Math.sin(now / 90) * 0.04 + Math.sin(now / 37) * 0.03;
   lastFrame = now;
   controls.update(); renderer.render(scene, camera);
   if (stats && !shown) { shown = true; dimsEl.textContent += " · " + stats; }

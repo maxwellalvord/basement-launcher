@@ -99,6 +99,11 @@
       const r = el.getBoundingClientRect();
       return { x: r.left + r.width * p.f, y: r.top + 4, vis: r.right > 40 && r.left < innerWidth - 40 };
     }
+    if (p.type === "widget") {
+      const el = document.querySelectorAll(".widgets .card")[p.i]; if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width * p.f, y: r.top + 3, vis: true };
+    }
     const el = clockEl(); if (!el) return null;
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width * p.f, y: r.top + r.height * 0.2, vis: true };
@@ -164,6 +169,10 @@
     if (r < 0.3) goTo(tileP(focusIndex()), 95 * slow).then(settle);
     else if (r < 0.55) { const v = visibleTiles(); goTo(tileP(v[Math.floor(Math.random() * v.length)] ?? 0), 55 * slow).then(settle); }
     else if (r < 0.62 && m !== "sad") goTo({ type: "clock", f: rand(0.25, 0.8) }, 60).then(settle);
+    else if (r < 0.7 && m !== "sad" && document.querySelector(".widgets .card")) {
+      const n = document.querySelectorAll(".widgets .card").length;
+      goTo({ type: "widget", i: Math.floor(Math.random() * n), f: rand(0.3, 0.7) }, 60).then(settle);
+    }
     else {
       const pool = m === "sad" ? ["lie", "lie", "sit", "sleep"] : ["sit", "lie", "stand", "sit", "sleep"];
       setPose(pool[Math.floor(Math.random() * pool.length)]);
@@ -506,7 +515,11 @@
       const bob = Math.sin(t / 300) * 2;
       g.save(); g.translate(bx, by + bob);
       const kind = D.bubble;
-      if (kind === "heart" || kind === "!" || kind === "z") {
+      if (kind === "woof") {
+        g.fillStyle = "rgba(230,233,240,0.95)"; g.beginPath(); g.roundRect(-26, -22, 52, 22, 8); g.fill();
+        g.beginPath(); g.moveTo(-6, 0); g.lineTo(0, 7); g.lineTo(4, 0); g.fill();
+        g.fillStyle = "#c0303a"; g.font = "800 14px Syne, system-ui, sans-serif"; g.textAlign = "center"; g.fillText("WOOF", 0, -6);
+      } else if (kind === "heart" || kind === "!" || kind === "z") {
         g.font = "600 16px Syne, system-ui, sans-serif"; g.textAlign = "center";
         if (kind === "heart") {
           for (let i = 0; i < 3; i++) {
@@ -595,5 +608,18 @@
     const mins = (Date.now() - (S.seen || Date.now())) / 60000;
     morningStretch().then(s => { if (!s && mins > 1) greet(mins); });
   }, 400);
-  window.lilly = { state: S, act, greet, say, D };     // handy from chrome://inspect
+  // Watchdog: something in the homelab went down. Run to that card and bark until it's dealt with
+  async function alert(cardIndex) {
+    if (D.busy) return;
+    closeMenu(); noteActivity();
+    D.busy = true;
+    try {
+      if (D.pose === "sleep" || D.pose === "lie") { setPose("stand"); await wait(400); }
+      D.tongue = false; D.ears = 0;
+      await goTo({ type: "widget", i: cardIndex, f: 0.5 }, 230);
+      for (let n = 0; n < 3; n++) { setPose("stand"); say("woof", 900); await hop(); await wait(250); }
+      setPose("sit"); say("!", 3000); await wait(3000);
+    } finally { D.busy = false; D.mode = "idle"; D.until = now() + 15000; }
+  }
+  window.lilly = { state: S, act, greet, say, alert, D };     // handy from chrome://inspect
 })();

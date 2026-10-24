@@ -5,11 +5,20 @@ cd "$(dirname "$0")"
 TV="192.168.68.57:5555"
 APK="app/build/outputs/apk/debug/app-debug.apk"
 
+# Homelab settings + Pi-hole password live outside the repo and are copied in at build time
+CONF="$HOME/.config/basement/homelab.json"
+if [ -f "$CONF" ]; then
+  cp "$CONF" app/src/main/assets/homelab.json
+else
+  echo "!! No $CONF (copy homelab.example.json there). Widgets will say 'not set up'."
+  rm -f app/src/main/assets/homelab.json
+fi
+
 echo "==> Building"
 gradle assembleDebug
 
 echo "==> Installing on $TV"
-adb connect "$TV" >/dev/null
+adb disconnect "$TV" >/dev/null 2>&1; adb connect "$TV" >/dev/null
 adb -s "$TV" install -r "$APK"
 
 echo "==> Setting Basement as Home"
