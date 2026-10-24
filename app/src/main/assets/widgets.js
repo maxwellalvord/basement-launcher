@@ -188,8 +188,8 @@
   }
   function bark(reason) {
     console.warn("[watchdog]", reason);
-    const i = [...document.querySelectorAll(".widgets .card")].findIndex(c => c.id === "wLab");   // look it up, don't hard-code
-    if (window.lilly && window.lilly.alert && i >= 0) window.lilly.alert(i);
+    // she barks from the top card (her only widget perch); the red Homelab card shows what's wrong
+    if (window.lilly && window.lilly.alert) window.lilly.alert(0);
   }
 
   // ---------- schedule ----------

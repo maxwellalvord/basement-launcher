@@ -28,7 +28,7 @@ body { background: var(--ground); color: var(--ink); font-family: var(--mono); o
 canvas { display: block; outline: none; }
 .hud {
   position: fixed; pointer-events: none; display: grid; gap: 6px;
-  top: calc(110px + env(safe-area-inset-top, 0px)); /* headroom for Lilly when she sits on the clock */
+  top: calc(100px + env(safe-area-inset-top, 0px)); /* headroom for Lilly when she sits on the clock */
   left: max(20px, env(safe-area-inset-left, 0px));
 }
 .hud h1 { margin: 0; font-family: var(--display); font-weight: 800; font-size: clamp(28px, 5vw, 52px); letter-spacing: -0.02em; line-height: 1; text-wrap: balance; }
@@ -67,7 +67,16 @@ canvas { display: block; outline: none; }
 [hidden] { display: none !important; }
 .hud .meta { display: none; }
 .controls, #tip, .legend { display: none !important; }
-.hud h1 { font-size: 64px; font-variant-numeric: tabular-nums; }
+.hud h1 { font-size: 52px; display: flex; gap: 5px; text-wrap: nowrap; }
+/* split-flap clock: monospace so every tile is the same width; tiles size to the glyph, nothing gets clipped */
+.fc { position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 0.92em; padding: 0.14em 0; border-radius: 7px;
+  background: linear-gradient(#1c2231 50%, #171c28 50%); box-shadow: 0 2px 0 rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+  font-family: var(--mono); font-weight: 500; }
+.fc::after { content: ""; position: absolute; left: 0; right: 0; top: calc(50% - 1px); height: 2px; background: #0b0f17; }
+.fc b { display: block; font: inherit; line-height: 1.1; color: var(--ink); will-change: transform; }
+.fc.sep { width: 0.34em; background: none; box-shadow: none; }
+.fc.sep::after { display: none; }
 .hud .date { font-family: var(--display); font-weight: 600; font-size: 20px; color: var(--ink); }
 .shade { position: fixed; inset: auto 0 0 0; height: 46%; pointer-events: none;
   background: linear-gradient(to top, rgba(11,15,23,0.92), rgba(11,15,23,0)); }
@@ -188,12 +197,54 @@ canvas { display: block; outline: none; }
   window.onBack = () => focus(0);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); }); // pick up new installs
 
-  function tick() {
+  // ---- split-flap clock ----
+  const DIGITS = "0123456789", LETTERS = "AMPMAPM";
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let cells = [], shown = "";
+  function flapTo(cell, target, steps) {
+    const token = (cell._t = (cell._t || 0) + 1), b = cell.firstChild;
+    const pool = /\d/.test(target) ? DIGITS : LETTERS;
+    let n = 0;
+    const step = () => {
+      if (cell._t !== token) return;                       // a newer flip took over this tile
+      const last = n >= steps;
+      b.textContent = last ? target : pool[Math.floor(Math.random() * pool.length)];
+      // Web Animations API: transform-only, runs on the compositor, no forced layout like restarting a CSS class
+      if (!reduce) b.animate([{ transform: "translateY(-30%) scaleY(0.35)", opacity: 0.55 }, { transform: "none", opacity: 1 }], { duration: 75, easing: "ease-out" });
+      if (!last) { n++; setTimeout(step, 85); }
+    };
+    step();
+  }
+  function setClock(text, scramble) {
+    if (text.length !== cells.length) {                   // 9:59 -> 10:00 changes the tile count
+      clock.replaceChildren();
+      cells = [...text].map(ch => {
+        const c = document.createElement("span");
+        c.className = "fc" + (ch === ":" || ch === " " ? " sep" : "");
+        c.innerHTML = "<b></b>"; clock.appendChild(c); return c;
+      });
+      shown = " ".repeat(text.length); scramble = true;
+    }
+    [...text].forEach((ch, k) => {
+      const c = cells[k];
+      if (c.classList.contains("sep")) { c.firstChild.textContent = ch; return; }
+      if (!scramble && shown[k] === ch) return;
+      flapTo(c, ch, scramble ? 3 + k + Math.floor(Math.random() * 2) : 2);   // short: about half a second total
+    });
+    shown = text;
+  }
+  const timeText = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(/\s/g, " ");
+  function tick(scramble = false) {
     const d = new Date();
-    clock.textContent = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    setClock(timeText(), scramble);
     dateEl.textContent = d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
   }
-  tick(); setInterval(tick, 10000);
+  // the board clatters through every tile on wake-up: app start, coming back from an app, leaving ambient mode
+  window.clockWake = () => tick(true);
+  window.onResumeApp = () => tick(true);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(true); });
+  addEventListener("ambient:wake", () => tick(true));
+  tick(true); setInterval(() => tick(false), 5000);
   load();
 })();
 </script>

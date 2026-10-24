@@ -96,21 +96,28 @@
   function point(p) {
     if (p.type === "tile") {
       const el = tiles()[p.i]; if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.left + r.width * p.f, y: r.top + 4, vis: r.right > 40 && r.left < innerWidth - 40 };
+      const r = el.getBoundingClientRect(), w = rowBounds();
+      // visible = inside the app row's own box. Tiles past its right edge are clipped, not gone,
+      // and they sit behind the widget column, so the screen edge is the wrong test
+      return { x: r.left + r.width * p.f, y: r.top + 4, vis: r.left >= w.left - 10 && r.right <= w.right - 40 };
     }
     if (p.type === "widget") {
-      const el = document.querySelectorAll(".widgets .card")[p.i]; if (!el) return null;
+      const el = document.querySelector(".widgets .card"); if (!el) return null;   // only ever the top card: lower ones would hide the card above
       const r = el.getBoundingClientRect();
       return { x: r.left + r.width * p.f, y: r.top + 3, vis: true };
     }
     const el = clockEl(); if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.left + r.width * p.f, y: r.top + r.height * 0.2, vis: true };
+    return { x: r.left + r.width * p.f, y: r.top + 2, vis: true };     // stand on top of the flap tiles
   }
   const tileP = i => ({ type: "tile", i: clamp(i, 0, Math.max(0, tiles().length - 1)), f: rand(0.3, 0.7) });
+  function rowBounds() {
+    const wrap = document.querySelector(".dock-wrap");
+    return wrap ? wrap.getBoundingClientRect() : { left: 0, right: innerWidth };
+  }
   function visibleTiles() {
-    return tiles().map((el, i) => [el.getBoundingClientRect(), i]).filter(([r]) => r.right > 60 && r.left < innerWidth - 60).map(([, i]) => i);
+    const w = rowBounds();
+    return tiles().map((el, i) => [el.getBoundingClientRect(), i]).filter(([r]) => r.left >= w.left - 10 && r.right <= w.right - 40).map(([, i]) => i);
   }
 
   // ---------- her state ----------
@@ -159,7 +166,11 @@
     if (D.busy || D.mode !== "idle" || t < D.until) return;
     const m = mood(), night = isNight();
     const here = point(D.perch);
-    if (here && !here.vis) { goTo(tileP(focusIndex()), 110).then(settle); return; }
+    if (here && !here.vis) {
+      // her tile slid out of the row: pop her to the row's edge (under the fade) and walk in, never across the widgets
+      const w = rowBounds(); D.x = clamp(D.x, w.left + 10, w.right - 50);
+      goTo(tileP(focusIndex()), 110).then(settle); return;
+    }
     if (night || m === "tired") {
       if (D.pose !== "sleep") { setPose(Math.random() < 0.3 ? "lie" : "sleep"); }
       D.until = t + rand(25000, 50000); return;
@@ -170,8 +181,7 @@
     else if (r < 0.55) { const v = visibleTiles(); goTo(tileP(v[Math.floor(Math.random() * v.length)] ?? 0), 55 * slow).then(settle); }
     else if (r < 0.62 && m !== "sad") goTo({ type: "clock", f: rand(0.25, 0.8) }, 60).then(settle);
     else if (r < 0.7 && m !== "sad" && document.querySelector(".widgets .card")) {
-      const n = document.querySelectorAll(".widgets .card").length;
-      goTo({ type: "widget", i: Math.floor(Math.random() * n), f: rand(0.3, 0.7) }, 60).then(settle);
+      goTo({ type: "widget", i: 0, f: rand(0.3, 0.7) }, 60).then(settle);
     }
     else {
       const pool = m === "sad" ? ["lie", "lie", "sit", "sleep"] : ["sit", "lie", "stand", "sit", "sleep"];
@@ -332,7 +342,7 @@
   let lastInput = Date.now();
   function noteActivity() {
     lastInput = Date.now();
-    if (document.body.classList.contains("ambient")) document.body.classList.remove("ambient");
+    if (document.body.classList.contains("ambient")) { document.body.classList.remove("ambient"); dispatchEvent(new Event("ambient:wake")); }
   }
   const amb = document.createElement("style");
   amb.textContent = `.dock-wrap, .dock-label, .focus-name, .shade, .lilly-hint { transition: opacity 1.2s; }
@@ -597,7 +607,7 @@
     drawDog(P, t);
     if (D.pose === "sleep" && t >= D.bubbleUntil + 1500) say("z", 4000);
     cv.style.transform = `translate3d(${Math.round(D.x - OX)}px, ${Math.round(D.y - OY)}px, 0)`;
-    hint.style.transform = `translate3d(${Math.round(clamp(D.x - 60, 8, innerWidth - 140))}px, ${Math.round(D.y - 108)}px, 0)`;
+    hint.style.transform = `translate3d(${Math.round(clamp(D.x - 60, 8, innerWidth - 140))}px, ${Math.round(Math.max(8, D.y - 108))}px, 0)`;
     if (menuOpen) renderMenu();
   }
 
